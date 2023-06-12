@@ -1,143 +1,408 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.4.22 <0.9.0;
+pragma solidity ^0.8.4;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "./SPOTICTOKEN.sol" ;
-import "./tUSDT.sol";
-import "./tUSDC.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+// import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "./Spotic.sol";
 
-contract Exchange {
-    SPOTICTOKEN private SPOTIC;
+contract SalesToken is Ownable, ReentrancyGuard {
+    using SafeMath for uint256;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
-    address exchange_owner ;
+    address payable public investorAddr;
+    address payable public ownerAddr;
 
-    uint256 exchange_rate = 3500;
-    uint256 hardCap = 3000000;
-    uint256 openTime;
-    uint256 seasonPeriod = 31536000;
-    uint256 limitedCnt = 3000;
-    uint256 totalSupply = 15000000000;
+    EnumerableSet.AddressSet tokenAddresses;
 
-    address _SOPOTIC_TOKEN_ADDR;
-    address _tUSDC_TOKEN_ADDR;
-    address _tUSDT_TOKEN_ADDR;
+    // AggregatorV3Interface internal priceFeed;
 
-    bool openedExchange = false;
+    uint256 public bnbRate = 3500;
+    uint256 public tokenRate = 11;
 
-    constructor ( address _SPOTIC, address _tUSDT, address _tUSDC ) {
-        openTime = block.timestamp;
+    uint256 public hardCap = 300000000000000000000000000;
+    uint256 public startTime;
+    uint256 public endTime = 1690789011;
+    uint256 public purchaseLimit = 10000000000000000000000;
+    uint256 public referralPercent = 1000; // 10% = 1000 / 10000
 
-        SPOTIC = SPOTICTOKEN(_SPOTIC);
+    bool private paused = false;
+    bool private unlimited = false;
 
-        exchange_owner = msg.sender ;
-        _SOPOTIC_TOKEN_ADDR = _SPOTIC;
-        _tUSDC_TOKEN_ADDR = _tUSDC;
-        _tUSDT_TOKEN_ADDR = _tUSDT;
+    address public spoticAddr;
 
-        SPOTIC.setOwnerAddress(address(this));
-        SPOTIC.mint(address(this), totalSupply);
+    mapping(address => uint256) purchasedAmount;
+
+    constructor() {
+        startTime = block.timestamp;
+        investorAddr = payable(msg.sender);
+        ownerAddr = payable(msg.sender);
+        // get rate bnb/usd
+        // priceFeed = AggregatorV3Interface(0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE);
+        // (, int256 price, , , ) = priceFeed.latestRoundData();
+
+        // // convert the price from 8 decimal places to 18 decimal places
+        // uint256 decimals = uint256(priceFeed.decimals());
+        // uint256 rate = uint256(price) * 10**(18 - decimals);
+
+        // tokenRate = rate;
     }
 
-    function setExchangeOwner(address _new_owner) public onlyOwner {
-        exchange_owner = _new_owner;
+    function checkIfOwner() public view returns (bool) {
+        return msg.sender == ownerAddr || msg.sender == investorAddr;
     }
 
-    function getExchangeOwner() external view returns(address) {
-        return exchange_owner;
+    function contractStarted() internal view returns (bool) {
+        return block.timestamp >= startTime;
     }
 
-    function getTotalSupply() external view returns(uint256) {
-        return totalSupply;
+    function getExchangeOwner() public view returns (address) {
+        return investorAddr;
     }
 
-    function openExchangeDapp() public onlyOwner {
-        openedExchange = true;
+    function getBnbRate() public view returns (uint256) {
+        return bnbRate;
     }
 
-    function closeExchangeDapp() public onlyOwner {
-        openedExchange = false;
+    function getPurchaseLimit() public view returns (uint256) {
+        return purchaseLimit;
     }
 
-    function getOpenStatus() external view returns(bool) {
-        return openedExchange;
+    function getStatusOfLimit() public view returns (bool) {
+        return unlimited;
     }
 
-    function getSeasonPeriod() external view returns(uint256) {
-        return seasonPeriod;
+    function getStartedTime() public view returns (uint256) {
+        return startTime;
     }
 
-    function getHardCap() external view returns(uint256) {
+    function getEndTime() public view returns (uint256) {
+        return endTime;
+    }
+
+    function getStatus() public view returns (bool) {
+        return paused;
+    }
+
+    function getHardCap() public view returns (uint256) {
         return hardCap;
     }
 
-    function getLimitedCnt() external view returns(uint256) {
-        return limitedCnt;
+    function getReferralPercent() public view returns (uint256) {
+        return referralPercent;
     }
 
-    function setLimitedCnt(uint256 _new_limited_cnt) public onlyOwner {
-        limitedCnt = _new_limited_cnt;
+    function addToken(address tokenAddress) external onlyOwner {
+        if (!tokenAddresses.contains(tokenAddress)) {
+            tokenAddresses.add(tokenAddress);
+        }
     }
 
-    function setHardCap(uint256 _hardCap) public onlyOwner {
+    function setBnbRate(uint256 _bnbRate) external onlyOwner {
+        bnbRate = _bnbRate;
+    }
+
+    function setInvestor(address _investorAddr) external onlyOwner {
+        investorAddr = payable(_investorAddr);
+    }
+
+    function setHardCap(uint256 _hardCap) external onlyOwner {
         hardCap = _hardCap;
     }
 
-    function setExchangeRate(uint256 new_rate) public onlyOwner {
-        exchange_rate = new_rate;
+    function setStartTime(uint256 _startTime) external onlyOwner {
+        startTime = _startTime;
     }
 
-    function getExchangeRate() external view returns(uint256) {
-        return exchange_rate;
+    function setEndTime(uint256 _endTime) external onlyOwner {
+        endTime = _endTime;
     }
 
-    function transferWithUSDT(uint256 transfer_amount, uint256 usdt_amount) external isLockedHardCap isOpenExchangeDapp isFinishedSeasonPeriod isOverflowLimitedCnt(transfer_amount) payable {
-        hardCap -= transfer_amount;
-        IERC20(_tUSDT_TOKEN_ADDR).transferFrom(msg.sender, address(this), usdt_amount);
-        SPOTIC.tranferToken(msg.sender, transfer_amount);
+    function setPurchaseLimit(uint256 _purchaseLimit) external onlyOwner {
+        purchaseLimit = _purchaseLimit;
+        unlimited = false;
     }
 
-    function transferWithUSDC(uint256 transfer_amount, uint256 usdc_amount) external isLockedHardCap isOpenExchangeDapp isFinishedSeasonPeriod isOverflowLimitedCnt(transfer_amount) payable {
-        hardCap -= transfer_amount;
-        IERC20(_tUSDC_TOKEN_ADDR).transferFrom(msg.sender, address(this), usdc_amount);
-        SPOTIC.tranferToken(msg.sender, transfer_amount);
+    function setReferralPercent(uint256 _referralPercent) external onlyOwner {
+        referralPercent = _referralPercent;
     }
 
-    function transfer(uint256 transfer_amount) external isLockedHardCap isOpenExchangeDapp isFinishedSeasonPeriod isOverflowLimitedCnt(transfer_amount) payable {
-        hardCap -= transfer_amount / exchange_rate;
-        SPOTIC.tranferToken(msg.sender, transfer_amount);
+    function setSpoticAddr(address _spoticAddr) external onlyOwner {
+        spoticAddr = _spoticAddr;
     }
 
-    function retransfer(uint256 retransfer_amount) external isLockedHardCap isOpenExchangeDapp isFinishedSeasonPeriod isOverflowLimitedCnt(retransfer_amount) payable {
-        hardCap += retransfer_amount / exchange_rate;
-        SPOTIC.retransferToken(msg.sender, address(this), retransfer_amount);
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
     }
 
-    function getOpenTime() external view returns(uint256) {
-        return openTime;
+    function setUnlimited() external onlyOwner {
+        unlimited = true;
     }
 
-    modifier isLockedHardCap() {
-        require(hardCap > 0, "locked hard cap") ;
+    function mint(uint256 amount) public onlyOwner returns (bool) {
+        Spotic spoticInstance = Spotic(spoticAddr);
+        spoticInstance.mint(amount);
+        return true;
+    }
+
+    function burn(uint256 amount) public onlyOwner returns (bool) {
+        Spotic spoticInstance = Spotic(spoticAddr);
+        spoticInstance.burn(amount);
+        return true;
+    }
+
+    function purchaseWithBnb() external payable isPaused existedSpotic {
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = spoticInstance.balanceOf(address(this));
+        uint256 amount = msg.value * bnbRate;
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        if (!unlimited) {
+            require(
+                purchaseLimit > purchasedAmount[msg.sender] + amount,
+                "You cant purchase more than limit"
+            );
+        }
+
+        spoticInstance.transfer(msg.sender, amount);
+
+        purchasedAmount[msg.sender] += amount;
+        hardCap -= amount;
+    }
+
+    function referralPurchaseWithBnb(
+        address _referrencedAddress
+    ) external payable isPaused existedSpotic {
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = spoticInstance.balanceOf(address(this));
+        uint256 amount = msg.value * bnbRate;
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        if (!unlimited) {
+            require(
+                purchaseLimit > purchasedAmount[msg.sender] + amount,
+                "You cant purchase more than limit"
+            );
+        }
+        require(
+            _referrencedAddress != address(0),
+            "Referrenced Address should not zero"
+        );
+        uint256 referrencedAmount = amount.mul(referralPercent).div(10000);
+
+        spoticInstance.transfer(msg.sender, amount - referrencedAmount);
+
+        purchasedAmount[msg.sender] += amount - referrencedAmount;
+        hardCap -= amount;
+    }
+
+    function purchaseBnbWithSpotic(
+        uint256 spoticAmount
+    ) external payable isPaused existedSpotic {
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = spoticInstance.balanceOf(msg.sender);
+        uint256 amount = spoticAmount.div(bnbRate);
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+
+        spoticInstance.transferFrom(msg.sender, address(this), spoticAmount);
+        payable(msg.sender).transfer(amount);
+    }
+
+    function referralPurchaseBnbWithSpotic(
+        address _referrencedAddress,
+        uint256 spoticAmount
+    ) external payable isPaused existedSpotic {
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = spoticInstance.balanceOf(msg.sender);
+        uint256 amount = spoticAmount * bnbRate;
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+
+        require(
+            _referrencedAddress != address(0),
+            "Referrenced Address should not zero"
+        );
+        uint256 referrencedAmount = amount.mul(referralPercent).div(10000);
+
+        payable(_referrencedAddress).transfer(referrencedAmount);
+        payable(msg.sender).transfer(amount - referrencedAmount);
+
+        spoticInstance.transferFrom(msg.sender, address(this), spoticAmount);
+
+        // purchasedAmount[msg.sender] -= spoticAmount;
+        // hardCap += spoticAmount;
+    }
+
+    function purchaseWithToken(
+        uint256 tokenAmount,
+        address tokenAddress
+    ) external payable isPaused existedSpotic {
+        IBEP20 tokenInstance = IBEP20(tokenAddress);
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+
+        uint256 balance = tokenInstance.balanceOf(msg.sender);
+        uint256 amount = tokenAmount * tokenRate;
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        require(
+            tokenAddresses.contains(tokenAddress),
+            "This token is not approved yet"
+        );
+
+        if (!unlimited) {
+            require(
+                purchaseLimit > purchasedAmount[msg.sender] + amount,
+                "You cant purchase more than limit"
+            );
+        }
+
+        spoticInstance.transfer(msg.sender, amount);
+        tokenInstance.transferFrom(msg.sender, address(this), tokenAmount);
+
+        purchasedAmount[msg.sender] += amount;
+        hardCap -= amount;
+    }
+
+    function referralPurchaseWithToken(
+        address _referrencedAddress,
+        uint256 tokenAmount,
+        address tokenAddress
+    ) external isPaused existedSpotic {
+        IBEP20 tokenInstance = IBEP20(tokenAddress);
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = tokenInstance.balanceOf(msg.sender);
+        uint256 amount = tokenAmount * tokenRate;
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        require(
+            tokenAddresses.contains(tokenAddress),
+            "This token is not approved yet"
+        );
+
+        if (!unlimited) {
+            require(
+                purchaseLimit > purchasedAmount[msg.sender] + amount,
+                "You cant purchase more than limit"
+            );
+        }
+        require(
+            _referrencedAddress != address(0),
+            "Referrenced Address should not zero"
+        );
+        uint256 referrencedAmount = amount.mul(referralPercent).div(10000);
+
+        spoticInstance.transfer(msg.sender, amount - referrencedAmount);
+        spoticInstance.transfer(_referrencedAddress, referrencedAmount);
+        tokenInstance.transferFrom(msg.sender, address(this), tokenAmount);
+
+        purchasedAmount[msg.sender] += amount - referrencedAmount;
+        hardCap -= amount;
+    }
+
+    function purchaseTokenWithSpotic(
+        uint256 spoticAmount,
+        address tokenAddress
+    ) external payable isPaused existedSpotic {
+        IBEP20 tokenInstance = IBEP20(tokenAddress);
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = spoticInstance.balanceOf(msg.sender);
+        uint256 amount = spoticAmount.div(tokenRate);
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        require(
+            tokenAddresses.contains(tokenAddress),
+            "This token is not approved yet"
+        );
+
+        spoticInstance.transferFrom(msg.sender, address(this), spoticAmount);
+        tokenInstance.transfer(msg.sender, amount);
+
+        // purchasedAmount[msg.sender] -= spoticAmount;
+        // hardCap += spoticAmount;
+    }
+
+    function referralPurchaseTokenWithSpotic(
+        address _referrencedAddress,
+        uint256 spoticAmount,
+        address tokenAddress
+    ) external payable isPaused existedSpotic {
+        IBEP20 tokenInstance = IBEP20(tokenAddress);
+        IBEP20 spoticInstance = IBEP20(spoticAddr);
+        uint256 balance = tokenInstance.balanceOf(msg.sender);
+        uint256 amount = spoticAmount.div(tokenRate);
+        require(amount > 0, "You have to purchase more than zero");
+        require(amount < balance, "You cant purchase more than balance");
+        require(
+            tokenAddresses.contains(tokenAddress),
+            "This token is not approved yet"
+        );
+        if (!unlimited) {
+            require(
+                purchaseLimit > purchasedAmount[msg.sender] + amount,
+                "You cant purchase more than limit"
+            );
+        }
+        require(
+            _referrencedAddress != address(0),
+            "Referrenced Address should not zero"
+        );
+        uint256 referrencedAmount = amount.mul(referralPercent).div(10000);
+
+        tokenInstance.transfer(msg.sender, amount - referrencedAmount);
+        tokenInstance.transfer(_referrencedAddress, referrencedAmount);
+        spoticInstance.transferFrom(msg.sender, address(this), spoticAmount);
+
+        // purchasedAmount[msg.sender] += spoticAmount;
+        // hardCap += spoticAmount;
+    }
+
+    function withdrawBnb() external onlyInvestor {
+        payable(address(msg.sender)).transfer(address(this).balance);
+    }
+
+    function withdrawAll() external onlyInvestor {
+        for (uint256 i = 0; i < tokenAddresses.length(); i++) {
+            IBEP20 tokenInstance = IBEP20(tokenAddresses.at(i));
+
+            tokenInstance.transfer(
+                msg.sender,
+                tokenInstance.balanceOf(address(this))
+            );
+            tokenInstance.transfer(
+                msg.sender,
+                tokenInstance.balanceOf(address(this))
+            );
+        }
+
+        payable(address(msg.sender)).transfer(address(this).balance);
+    }
+
+    function getBnbBalance() public view returns (uint256 bnbAmount) {
+        return address(this).balance;
+    }
+
+    function getTokenBalance(
+        address tokenAddress
+    ) public view returns (uint256 bnbAmount) {
+        IBEP20 tokenInstance = IBEP20(tokenAddress);
+        return tokenInstance.balanceOf(address(this));
+    }
+
+    modifier onlyInvestor() {
+        require(msg.sender == investorAddr, "not owner");
         _;
     }
 
-    modifier isOpenExchangeDapp() {
-        require(openedExchange, "close exchange dapp");
+    modifier isPaused() {
+        require(!paused, "purchasing is paused");
         _;
     }
 
-    modifier isFinishedSeasonPeriod() {
-        require(block.timestamp < openTime + seasonPeriod, 'season period was ended');
-        _;
-    }
-
-    modifier isOverflowLimitedCnt(uint256 transfer_amount) {
-        require( limitedCnt > transfer_amount / exchange_rate, 'overflow limited count' );
-        _;
-    }
-
-    modifier onlyOwner() {
-        require(msg.sender == exchange_owner, 'not owner');
+    modifier existedSpotic() {
+        require(spoticAddr != address(0), "Spotic Address is not set");
         _;
     }
 }
